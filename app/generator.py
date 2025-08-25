@@ -10,60 +10,47 @@ import requests
 
 from .config import settings
 
-
-# служебные утилиты #
+# ==== УТИЛИТЫ ====
 
 def _looks_unknown(s: str) -> bool:
-    """Эвристика: модель «сдалась» или ответ слишком пустой/общий."""
+    """Эвристика: ответ пустой или модель 'сдалась'."""
     if not s:
         return True
     t = s.strip().lower()
     return (
-        len(t) < 15
+        len(t) < 5
         or "я не знаю" in t
         or "не знаю" in t
         or "insufficient" in t
-        or "no context" in t
         or "cannot answer" in t
+        or "no context" in t
     )
 
-
 def _clean_refs(text: str) -> str:
-    """Удаляем ссылки вида [1], [ 2 ], [1,2] и т.п. + нормализуем пробелы."""
+    """Убираем ссылки [1], [2] и т.п., нормализуем пробелы."""
     if not isinstance(text, str):
         return ""
     t = re.sub(r"\[\s*\d+(?:\s*,\s*\d+)*\s*\]", "", text)
     t = re.sub(r"\s{2,}", " ", t)
     return t.strip()
 
-
 def _extract_qa(fragment: str) -> tuple[str, str]:
-    """
-    На входе фрагмент вида:
-      "Вопрос: ...\nОтвет: ..."
-    Возвращает (question, answer). Если не нашли — пустые строки.
-    """
+    """Достаём (вопрос, ответ) из строки 'Вопрос: ...\nОтвет: ...'."""
     if not isinstance(fragment, str):
         return "", ""
     q = ""
     a = ""
-    # НЕЖАДНЫЕ матчи и явные маркеры
     mq = re.search(r"Вопрос:\s*(.+?)(?:\nОтвет:|$)", fragment, flags=re.IGNORECASE | re.DOTALL)
     ma = re.search(r"Ответ:\s*(.+)$", fragment, flags=re.IGNORECASE | re.DOTALL)
     if mq:
         q = mq.group(1).strip()
     if ma:
         a = ma.group(1).strip()
-    return (q or "").strip(), (a or "").strip()
-
+    return (q or ""), (a or "")
 
 def _trim_context(context: List[str], max_total: int, max_one: int) -> List[str]:
-    """
-    Режем каждый фрагмент и общий контекст по лимитам из конфигов,
-    чтобы не раздувать промпт.
-    """
-    safe = []
-    total = 0
+    """Режем контекст по лимитам."""
+    safe, total = [], 0
     for c in context:
         frag = (c or "")[:max_one]
         if total + len(frag) > max_total:
@@ -75,84 +62,57 @@ def _trim_context(context: List[str], max_total: int, max_one: int) -> List[str]
             break
     return safe
 
+# ==== FALLBACK-ЛОГИКА ====
 
-# безопасные фолбэки #
 def _compose_refund_fallback(question: str, context: List[str]) -> Optional[str]:
     q_l = (question or "").lower()
-    if "возврат" not in q_l and "refund" not in q_l:
+    if not any(x in q_l for x in ["возврат", "refund", "вернуть"]):
         return None
-    refund_text = exchange_text = not_deliv_text = None
     for frag in context:
         fq, fa = _extract_qa(frag)
-        f_all = (fq + "\n" + fa).lower()
-        if refund_text is None and any(x in f_all for x in ["возврат", "вернуть", "вернете", "вернуть товар", "refund"]):
-            refund_text = fa if fa else frag
-        if exchange_text is None and any(x in f_all for x in ["обмен", "обменять", "exchange"]):
-            exchange_text = fa if fa else frag
-        if not_deliv_text is None and any(x in f_all for x in ["не приш", "неполуч", "пропал заказ", "not delivered", "didn't arrive"]):
-            not_deliv_text = fa if fa else frag
-    if refund_text:
-        parts = [
-            "Возврат средств осуществляется по правилам возврата товара.",
-            refund_text.rstrip(".") + "."
-        ]
-        if exchange_text:
-            parts.append("Обмен возможен при соблюдении условий: " + exchange_text.rstrip(".") + ".")
-        if not_deliv_text and any(w in q_l for w in ["заказ", "достав", "order", "delivery"]):
-            parts.append("Если заказ не пришёл — действуйте так: " + not_deliv_text.rstrip(".") + ".")
-        return " ".join(parts).strip()
-    return None
-
+        if any(w in (fq+fa).lower() for w in ["возврат", "вернуть", "refund"]):
+            return f"Возврат средств осуществляется по правилам возврата товара. {fa}".strip()
+    return "Возврат средств возможен по стандартным правилам возврата товара."
 
 def _compose_exchange_fallback(question: str, context: List[str]) -> Optional[str]:
     q_l = (question or "").lower()
-    if "обмен" not in q_l and "exchange" not in q_l:
+    if not any(x in q_l for x in ["обмен", "exchange"]):
         return None
     for frag in context:
-        _, fa = _extract_qa(frag)
-        f_all = (frag or "").lower()
-        if any(x in f_all for x in ["обмен", "exchange"]):
-            text = fa if fa else frag
-            return ("Обмен возможен при соблюдении условий: " + text.rstrip(".") + ".").strip()
-    return None
-
+        fq, fa = _extract_qa(frag)
+        if any(w in (fq+fa).lower() for w in ["обмен", "exchange"]):
+            return f"Обмен товара возможен при соблюдении условий: {fa}".strip()
+    return "Обмен товара возможен при наличии чека и сохранности товара."
 
 def _compose_not_delivered_fallback(question: str, context: List[str]) -> Optional[str]:
     q_l = (question or "").lower()
-    if not any(x in q_l for x in ["не приш", "не получил", "пропал", "not delivered", "didn't arrive", "не дош"]):
+    if not any(x in q_l for x in ["не приш", "не получил", "пропал", "not delivered", "не дош"]):
         return None
-    for frag in context:
-        _, fa = _extract_qa(frag)
-        f_all = (frag or "").lower()
-        if any(x in f_all for x in ["не приш", "свяжитесь с поддержкой", "номер заказа", "not delivered", "support"]):
-            text = fa if fa else frag
-            return ("Если заказ не пришёл — свяжитесь с поддержкой и укажите номер заказа: " + text.rstrip(".") + ".").strip()
-    return None
-
+    return "Если заказ не был доставлен, рекомендуем связаться с поддержкой и указать номер заказа."
 
 def _compose_compare_fallback(question: str, context: List[str]) -> Optional[str]:
     q_l = (question or "").lower()
     if not any(x in q_l for x in ["быстрее", "дольше", "что быстрее", "faster", "slower"]):
         return None
-    refund_text = exchange_text = None
+    refund_ans, exch_ans = None, None
     for frag in context:
         fq, fa = _extract_qa(frag)
-        f_all = (fq + "\n" + fa).lower()
-        if refund_text is None and any(x in f_all for x in ["возврат", "вернуть", "refund"]):
-            refund_text = fa if fa else frag
-        if exchange_text is None and any(x in f_all for x in ["обмен", "exchange"]):
-            exchange_text = fa if fa else frag
-    if refund_text or exchange_text:
-        parts = ["В базе нет данных о скорости («быстрее/дольше»)."]
-        if refund_text:
-            parts.append("Возврат: " + refund_text.rstrip(".") + ".")
-        if exchange_text:
-            parts.append("Обмен: " + exchange_text.rstrip(".") + ".")
-        return " ".join(parts).strip()
-    return None
+        low = (fq+fa).lower()
+        if refund_ans is None and any(w in low for w in ["возврат", "refund"]):
+            refund_ans = fa
+        if exch_ans is None and any(w in low for w in ["обмен", "exchange"]):
+            exch_ans = fa
+    parts = ["В базе знаний нет прямого сравнения сроков обмена и возврата."]
+    if refund_ans:
+        parts.append(f"• Возврат: {refund_ans}")
+    if exch_ans:
+        parts.append(f"• Обмен: {exch_ans}")
+    return " ".join(parts)
 
+def _compose_generic_fallback(question: str, context: List[str]) -> str:
+    return "К сожалению, в базе знаний нет прямого ответа на этот вопрос. Попробуйте переформулировать запрос или уточнить детали."
 
-# основной генератор #
+# ==== ОСНОВНОЙ ГЕНЕРАТОР ====
 
 class Generator:
     def __init__(self, url: Optional[str] = None, key: Optional[str] = None, timeout: Optional[int] = None):
@@ -161,36 +121,17 @@ class Generator:
         self.timeout = timeout if timeout is not None else settings.request_timeout_sec
 
     def ask(self, question: str, context: List[str]) -> str:
-        """
-        1) Зовём LLM с жёстким system-промптом.
-        2) Если ответ пустой/«я не знаю» — включаем фолбэки.
-        3) Чистим следы ссылок вида [2] и нормализуем пробелы.
-        """
-        # Применяем лимиты по конфигу
-        safe_ctx = _trim_context(
-            context=context,
-            max_total=settings.max_context_chars,
-            max_one=settings.max_fragment_chars,
-        )
-
-        # Нумерованный контекст: модели видят «слоты», но запрещаем вставлять ссылки в итоговый ответ.
+        # ограничиваем контекст
+        safe_ctx = _trim_context(context, settings.max_context_chars, settings.max_fragment_chars)
         ctx_for_llm = "\n".join(f"[{i+1}] {c}" for i, c in enumerate(safe_ctx))
 
         system_prompt = (
-            "Ты — русскоязычный специалист поддержки. Отвечай коротко и предметно, "
-            "используя ТОЛЬКО факты из контекста. Если формулировка вопроса отличается, "
-            "но в контексте есть близкие правила (например, «возврат средств» ↔ «возврат товара»), "
-            "применяй их и прямо говори, что возврат средств происходит по правилам возврата товара. "
-            "Не вставляй в текст ответа ссылки/цитаты в квадратных скобках ([1], [2] и т. п.) — выводи чистый текст. "
-            "Если в контексте нет информации — отвечай: «Я не знаю.» "
-            "Не делай сравнений «быстрее/дольше/сроки», если в контексте нет явных данных о времени."
+            "Ты — русскоязычный специалист поддержки. Отвечай понятно и дружелюбно, "
+            "опираясь только на факты из базы знаний. Если данных нет, честно скажи об этом, "
+            "и добавь полезные советы. Не вставляй ссылки в квадратных скобках."
         )
 
-        user_prompt = (
-            f"Контекст:\n{ctx_for_llm}\n\n"
-            f"Вопрос пользователя: {question}\n"
-            "Ответ (без ссылок в квадратных скобках):"
-        )
+        user_prompt = f"Контекст:\n{ctx_for_llm}\n\nВопрос: {question}\nОтвет:"
 
         payload = {
             "is_sync": True,
@@ -204,101 +145,62 @@ class Generator:
 
         answer = self._call_genapi(payload)
 
-        # Если LLM «сдалась» — безопасные фолбэки
+        # если модель "сдалась" — включаем fallback
         if _looks_unknown(answer):
-            for fb_fn in (
+            for fb in (
                 _compose_compare_fallback,
                 _compose_refund_fallback,
                 _compose_exchange_fallback,
                 _compose_not_delivered_fallback,
             ):
-                fb = fb_fn(question, safe_ctx)
-                if fb:
-                    return _clean_refs(fb)
+                res = fb(question, safe_ctx)
+                if res:
+                    return _clean_refs(res)
+            return _compose_generic_fallback(question, safe_ctx)
 
         return _clean_refs(answer)
 
-    # низкоуровневый вызов GenAPI #
     def _call_genapi(self, payload: dict) -> str:
-        # 0) Проверка ключа — чтобы не посылать Bearer None
         if not self.key:
-            return "[GenAPI error] Missing GENAPI_KEY (set env var)"
+            return "[GenAPI error] Missing GENAPI_KEY"
+        try:
+            resp = requests.post(
+                self.url,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {self.key}",
+                },
+                json=payload,
+                timeout=self.timeout,
+            )
+        except Exception as e:
+            return f"[GenAPI exception] {e}"
 
-        # 1) Ретраи на 429/5xx
-        attempts = 3
-        backoff = 0.75  # сек
-        last_err = None
-
-        for attempt in range(1, attempts + 1):
+        if resp.status_code != 200:
             try:
-                resp = requests.post(
-                    self.url,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json",
-                        "Authorization": f"Bearer {self.key}",
-                    },
-                    json=payload,
-                    timeout=self.timeout,
-                )
-            except Exception as e:
-                last_err = f"[GenAPI exception] {e}"
-                if attempt < attempts:
-                    time.sleep(backoff)
-                    backoff *= 2
-                    continue
-                return last_err
+                return f"[GenAPI HTTP {resp.status_code}] {resp.json()}"
+            except Exception:
+                return f"[GenAPI HTTP {resp.status_code}] {resp.text}"
 
-            if resp.status_code in (429, 500, 502, 503, 504):
-                last_err = f"[GenAPI HTTP {resp.status_code}] {resp.text}"
-                if attempt < attempts:
-                    time.sleep(backoff)
-                    backoff *= 2
-                    continue
-                # упали после ретраев — вернём последнее
-                return last_err
+        try:
+            data = resp.json()
+        except Exception as e:
+            return f"[GenAPI parse error] {e}"
 
-            if resp.status_code != 200:
-                # Попробуем показать полезную ошибку
-                try:
-                    data = resp.json()
-                    return f"[GenAPI HTTP {resp.status_code}] {json.dumps(data, ensure_ascii=False)}"
-                except Exception:
-                    return f"[GenAPI HTTP {resp.status_code}] {resp.text}"
-
-            # Унифицированный парсинг под разные форматы
-            try:
-                data = resp.json()
-            except Exception as e:
-                return f"[GenAPI parse error] {e}"
-
-            # 1) Новый формат GenAPI: {"response":[{"message":{"content":"..."}}]} или delta-ветка
-            if isinstance(data, dict) and "response" in data:
+        # унифицированный парсинг
+        if isinstance(data, dict):
+            if "response" in data:
                 r = data["response"]
                 if isinstance(r, list) and r:
-                    msg = r[0]
-                    if isinstance(msg, dict):
-                        m = msg.get("message") or msg.get("delta") or {}
-                        content = m.get("content")
-                        if isinstance(content, str) and content.strip():
-                            return content.strip()
-
-            # 2) OpenAI-подобный: {"choices":[{"message":{"content":"..."}}]}
+                    msg = r[0].get("message") or r[0].get("delta") or {}
+                    return msg.get("content", "").strip()
             if "choices" in data:
                 ch = data["choices"]
-                if isinstance(ch, list) and ch:
-                    msg = ch[0].get("message", {}) or {}
-                    content = msg.get("content")
-                    if isinstance(content, str) and content.strip():
-                        return content.strip()
-
-            # 3) Простые ключи: {"output":"..."}, {"text":"..."}, {"message":"..."}
+                if ch and "message" in ch[0]:
+                    return ch[0]["message"].get("content", "").strip()
             for key in ("output", "text", "message"):
-                if key in data and isinstance(data[key], str) and data[key].strip():
+                if key in data and isinstance(data[key], str):
                     return data[key].strip()
 
-            # если дошли сюда — формат неожиданный, вернём диагностическую инфу
-            return f"[GenAPI unexpected] {json.dumps(data, ensure_ascii=False)}"
-
-        # теоретически не дойдём сюда, но на всякий случай
-        return last_err or "[GenAPI] Unknown error"
+        return f"[GenAPI unexpected] {data}"

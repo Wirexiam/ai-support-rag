@@ -98,6 +98,11 @@ def as_html_with_br(text: str) -> str:
     safe = html.escape(text).replace("\n", "<br/>")
     return safe
 
+def html_to_plain(a_html: str) -> str:
+    """Преобразует нашу HTML-строку (escape + <br/>) обратно в обычный текст для st.error()."""
+    return html.unescape(a_html.replace("<br/>", "\n"))
+
+# === Обработка запроса ===
 if ask_clicked and user_q.strip():
     resp = call_api(user_q.strip(), api_url)
     if resp.get("_ok"):
@@ -137,6 +142,7 @@ for q, a_html, ctx_list, lat, ok in reversed(st.session_state.history):
 
             st.caption(f"⏱ Время ответа: {lat:.2f} c • API: {api_url}")
         else:
-            st.error(a_html, unsafe_allow_html=True)
+            plain_err = html_to_plain(a_html)
+            st.error(plain_err)
             st.caption(f"⏱ Попытка запроса заняла: {lat:.2f} c • API: {api_url}")
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
