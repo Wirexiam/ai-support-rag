@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="AI Support RAG Banner" width="800"/>
+</p>
+
 # AI Support RAG
 
 Retrieval-Augmented Generation для справки/FAQ: гибридный поиск (FAISS + BM25) + генерация ответа. В интерфейсе показываются **и ответ**, и **источники** (фрагменты из базы).
@@ -27,8 +31,8 @@ Retrieval-Augmented Generation для справки/FAQ: гибридный п�
 ## Установка
 
 ```bash
-git clone <YOUR_REPO_URL>
-cd rag_support
+git clone https://github.com/Wirexiam/ai-support-rag.git
+cd ai-support-rag
 
 pip install -r requirements.txt
 
