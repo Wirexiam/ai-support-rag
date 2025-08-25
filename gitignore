@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+build/
+dist/
+.venv/
+venv/
+ENV/
+env/
+.env
+*.log
+
+# Pytest / cache
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Data & artifacts
+results/
+*.pkl
+*.index
+faq.index
+faq_meta.pkl
+faq_embeddings.pkl
+bm25.pkl
+
+# Streamlit cache
+.streamlit/
+
+# Docker
+*.pid

@@ -1,0 +1,4 @@
+ts,nodeid,case,status,duration_sec,question,answer,latency_sec,context_len
+2025-08-25 12:28:22,tests/test_mega.py::test_mega_suite,unknown_ru,passed,2.911,Как готовить борщ?,Я не знаю.,2.9,5
+2025-08-25 12:28:25,tests/test_mega.py::test_mega_suite,exchange_en,passed,3.254,How to exchange item?,Exchange is possible with a receipt and if the item is intact.,3.25,5
+2025-08-25 12:28:29,tests/test_mega.py::test_mega_suite,refund_ru,passed,4.476,Как оформить возврат средств?,Возврат средств происходит по правилам возврата товара. Вы можете вернуть товар в течение 14 дней при сохранении упаковки.,4.47,5
